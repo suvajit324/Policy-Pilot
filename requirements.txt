@@ -1,6 +1,5 @@
 fastapi
-uvicorn
-sentence-transformers
-faiss-cpu
-pypdf
+uvicorn[standard]
 numpy
+faiss-cpu
+requests
