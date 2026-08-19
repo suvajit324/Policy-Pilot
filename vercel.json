@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/ask", "destination": "/api/index" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
