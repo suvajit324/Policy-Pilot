@@ -1,5 +1,4 @@
 fastapi
 uvicorn[standard]
 numpy
-faiss-cpu
-requests
+scikit-learn
