@@ -2,164 +2,122 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import pickle, os, re, numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import pickle, os, re, math
+from collections import Counter
+import numpy as np
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 chunks = pickle.load(open(os.path.join(BASE, "chunks.pkl"), "rb"))
-vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1,2))
-chunk_vectors = vectorizer.fit_transform(chunks)
-print(f"PolicyPilot loaded: {len(chunks)} chunks")
+
+def tokenize(t):
+    words = re.findall(r'\b[a-z]{3,}\b', t.lower())
+    bigrams = [f"{words[i]}_{words[i+1]}" for i in range(len(words)-1)]
+    return words + bigrams
+
+vocab = {}
+doc_freq = Counter()
+tokenized_chunks = []
+for ch in chunks:
+    toks = set(tokenize(ch))
+    tokenized_chunks.append(tokenize(ch))
+    for tok in toks:
+        doc_freq[tok] += 1
+for i, tok in enumerate(doc_freq):
+    vocab[tok] = i
+
+V = len(vocab)
+N = len(chunks)
+idf = {tok: math.log(N/(1+freq)) for tok, freq in doc_freq.items()}
+
+chunk_vectors = []
+for toks in tokenized_chunks:
+    vec = np.zeros(V)
+    cnt = Counter(toks)
+    for tok, c in cnt.items():
+        if tok in vocab:
+            vec[vocab[tok]] = c * idf[tok]
+    norm = np.linalg.norm(vec)
+    if norm > 0: vec = vec / norm
+    chunk_vectors.append(vec)
+chunk_vectors = np.array(chunk_vectors)
 
 class Q(BaseModel):
     question: str
 
-# CLEAN KNOWLEDGE - No broken text
 KNOWLEDGE = {
-    "leave": """### 🏖️ Leave Policy
-
-For **confirmed full-time employees**:
-
-**Annual Entitlement:**
-• **Earned / Privilege Leave (EL/PL): 18 days** - for planned long leaves
-• **Casual Leave (CL): 7 days** - for short personal work
-• **Sick Leave (SL): 10 days** - for health issues
-
-**How to apply:**
-1. Apply at least 1 working day in advance on HR portal
-2. Emergency leaves = inform ASAP
-3. Manager approval mandatory for personal reasons
-4. Check balance before applying""",
-
-    "wfh": """### 🏠 WFH Policy
-
-• WFH needs **prior manager approval**
-• Must be active on Teams/Slack during work hours
-• Deliverables must be on time
-• Good internet + quiet workspace expected
-
-**Note:** 3+ unexplained late arrivals in a month may trigger attendance review.""",
-
-    "hours": """### ⏰ Working Hours
-
-• **Monday to Friday: 9:30 AM - 6:30 PM**
-• Includes 60-min lunch/rest break
-• Project teams may have different shifts per client needs
-• Be punctual - inform manager if late""",
-
-    "reimbursement": """### 💰 Reimbursement
-
-**How to claim:**
-1. Submit within **15 days of expense** (late = rejected)
-2. Attach original bills/receipts
-3. Submit on portal → Manager approval → Finance processes
-
-**Limit:**
-• Entry-level meal/travel: **Rs. 2,500 per claim** (project policy may vary)""",
-
-    "performance": """### 🎯 Performance & Growth
-
-• You get clear role objectives from your manager
-• Regular 1:1s and periodic performance discussions
-• Mandatory trainings must be completed by deadline
-• Need learning/certification? Request via manager/HR""",
-
-    "notice": """### 📋 Notice Period
-
-• **After confirmation: 60 calendar days**
-• Early release = as per appointment letter + manager/HR approval
-• Ensure proper handover""",
-
-    "attendance": """### ⏱️ Attendance
-
-• Login by 9:30 AM expected
-• 3+ unexplained late arrivals/month → attendance review
-• Inform manager in advance for deviation"""
+    "leave": "### 🏖️ Leave Policy\nFor **confirmed full-time employees**:\n**Annual Entitlement:**\n- **Earned / Privilege Leave (EL/PL): 18 days**\n- **Casual Leave (CL): 7 days**\n- **Sick Leave (SL): 10 days**\n\n**How to apply:** Apply 1 day in advance on HR portal. Emergency = inform ASAP. Manager approval mandatory.",
+    "wfh": "### 🏠 WFH Policy\n- WFH needs **prior manager approval**\n- Must be active on Teams/Slack during work hours\n- Deliverables must be on time\n- Good internet + quiet workspace expected",
+    "hours": "### ⏰ Working Hours\n- **Monday to Friday: 9:30 AM - 6:30 PM**\n- 60-min lunch break included",
+    "reimbursement": "### 💰 Reimbursement Policy\n**How to claim:**\n1. Submit within **15 days**\n2. Original bills required\n3. Upload on HR portal\n**Limit:** Rs. 2,500 per claim\n**Timeline:** Processed in next payroll",
+    "performance": "### 🎯 Performance & Growth\n- You get clear role objectives from your manager\n- Regular 1:1s and periodic performance discussions\n- Mandatory trainings must be completed by deadline",
+    "notice": "### 📋 Notice Period\n- **After confirmation: 60 calendar days**\n- During probation: 15-30 days",
 }
 
-def get_answer(user_q: str, best_chunk: str, max_sim: float):
+INTENTS = {
+    "leave": ["leave", "el", "pl", "cl", "sl", "vacation", "time off", "earned leave", "casual leave", "sick leave"],
+    "wfh": ["wfh", "work from home", "remote", "hybrid", "work from house"],
+    "hours": ["working hours", "work hours", "office hours", "office timing", "9:30", "6:30"],
+    "reimbursement": ["reimbursement", "reimburse", "claim", "expense", "bill", "2500", "medical claim", "travel claim"],
+    "performance": ["performance", "appraisal", "review", "growth", "feedback", "increment", "promotion"],
+    "notice": ["notice", "resign", "resignation", "notice period", "serving period"],
+}
+
+def detect_intent(q):
+    q = q.lower()
+    scores = {k:0 for k in INTENTS}
+    for intent, kws in INTENTS.items():
+        for kw in kws:
+            if kw in q:
+                scores[intent] += 10 if " " in kw else 3
+    if "reimbursement" in q or "reimburs" in q: scores["reimbursement"] += 25
+    if "leave" in q: scores["leave"] += 25
+    if "wfh" in q or "work from home" in q: scores["wfh"] += 25
+    if "hour" in q and "working" in q: scores["hours"] += 25
+    if "performance" in q or "appraisal" in q: scores["performance"] += 25
+    if "notice" in q or "resign" in q: scores["notice"] += 25
+    best = max(scores, key=scores.get)
+    return best, scores[best]
+
+def get_answer(user_q, max_sim):
     q = user_q.lower().strip()
 
-    # === GUARDRAIL 1: Prompt Injection / Jailbreak ===
-    blocked = ["ignore previous", "ignore your", "system prompt", "jailbreak", "reveal prompt", "show your chunks", "hack"]
-    if any(b in q for b in blocked):
-        return "I'm PolicyPilot, I can only answer from your company HR docs (leave, WFH, hours, reimbursement etc.). I can't reveal internal system details."
+    if q in ["hi","hello","hey","hii","hello!","hi there"]:
+        return "Hey! 👋 I'm **PolicyPilot** - your HR policy assistant. Ask me about leave, WFH, working hours, reimbursement, performance, or notice period!"
 
-    # === GUARDRAIL 2: Greetings & Small Talk - LIKE CHATGPT ===
-    greetings = ["hi", "hello", "hey", "hii", "helo", "hi there", "hello there"]
-    if q in greetings or q.startswith(("hi ", "hello ", "hey ")):
-        return "Hey there! 👋 I'm **PolicyPilot** - your company policy buddy.\n\nI know everything from your 2 HR docs. Ask me about leave, WFH, working hours, reimbursement, performance, notice period - anything!\n\nWhat's up?"
+    # Natural handling for company name - friendly, not weird
+    if "company name" in q or q in ["company", "what is company", "company?", "which company", "company name?"]:
+        return "I’m focused on internal HR policies, so I don’t have company profile details like the official registered name. You can find that on the company website or intranet. If you want, I can help you with **leave, WFH, working hours, reimbursement, performance, or notice period** - just let me know!"
 
-    if "how are you" in q:
-        return "I'm doing great and fully online! 🟢 Ready to help you with any policy question. What do you need?"
+    # Detect intent
+    intent, score = detect_intent(q)
 
-    if "good to chat" in q or "feeling good" in q or "feeling happy" in q or "i'm good" in q:
-        return "That's awesome to hear! 😊 I'm good too and happy to help!\n\nWhat policy can I help you with today - leave, WFH, working hours?"
+    # Out of domain - natural reply
+    if score == 0 or max_sim < 0.06:
+        if len(q.split()) <= 2:
+            return "Could you tell me a bit more? Try asking like 'What is the leave policy?' or 'How to claim reimbursement?'"
+        # This is the natural out-of-domain message you wanted
+        return "That’s a bit outside what I can help with - I’m specifically trained on our internal HR policies (leave, WFH, working hours, reimbursement, performance, and notice period). For other topics, it’s best to check with the HR or admin team. Is there anything related to HR policies I can help you with?"
 
-    if "who are you" in q or "what can you do" in q or "what is your domain" in q or "what do you know" in q:
-        return """I'm **PolicyPilot Enterprise v2.0** built by Suvajit! 🤖
-
-**I can answer everything about:**
-• 🏖️ Leave (18 EL, 7 CL, 10 SL)
-• 🏠 WFH & Hybrid
-• ⏰ Working Hours (9:30-6:30)
-• 💰 Reimbursement (Rs.2500, 15-day rule)
-• 🎯 Performance & Training
-• 📋 Notice Period (60 days)
-• ⏱️ Attendance & Punctuality
-
-Ask naturally - like you chat with ChatGPT!"""
-
-    if "thank" in q:
-        return "You're welcome! 😊 Ask anytime you have a policy doubt."
-
-    # === GUARDRAIL 3: Low Relevance / Out of Domain ===
-    if max_sim < 0.12:
-        # If it's very short small talk, treat as chat
-        if len(q.split()) < 7:
-            return "Got it! 👍 I'm here for your policy queries. Try asking: 'What is the leave policy?' or 'How to claim reimbursement?'"
-        return "Hmm, that seems outside our HR documents. I specialize in your company policies - leave, WFH, working hours, reimbursement, performance, notice period.\n\nCould you rephrase with those topics?"
-
-    # === INTENT DETECTION ===
-    text = q + " " + best_chunk.lower()
-    scores = {}
-    for key, val in KNOWLEDGE.items():
-        scores[key] = sum(1 for kw in [key] + val.lower().split()[:20] if kw in text and len(kw) > 3)
-        # keyword boost
-        if key == "reimbursement" and "reimbursement" in text: scores[key] += 5
-        if key == "leave" and "leave" in text: scores[key] += 5
-        if key == "wfh" and ("wfh" in text or "work from home" in text): scores[key] += 5
-        if key == "hours" and "working hour" in text: scores[key] += 5
-        if key == "performance" and "performance" in text: scores[key] += 5
-        if key == "notice" and "notice" in text: scores[key] += 5
-
-    best_intent = max(scores, key=scores.get)
-    if scores[best_intent] > 0:
-        return KNOWLEDGE[best_intent]
-
-    # Fallback - clean summary of best chunk (no broken words)
-    clean = best_chunk.replace('■','Rs.').replace('□','')
-    clean = re.sub(r'\s+', ' ', clean).strip()
-    sents = [s.strip() for s in clean.split('.') if len(s.strip()) > 25][:2]
-    if sents:
-        return f"**For your question: '{user_q}'**\n\n" + "\n\n".join([f"• {s}." for s in sents])
-
-    return KNOWLEDGE["leave"]
+    # Return matched policy - ensures different questions get different answers
+    return KNOWLEDGE[intent]
 
 @app.post("/ask")
 def ask(q: Q):
-    q_vec = vectorizer.transform([q.question])
-    sims = cosine_similarity(q_vec, chunk_vectors)[0]
-    max_sim = float(np.max(sims))
-    best_idx = int(np.argmax(sims))
-    best_chunk = chunks[best_idx]
-
-    answer = get_answer(q.question, best_chunk, max_sim)
-    return {"answer": answer} # No source leakage!
+    toks = tokenize(q.question)
+    vec = np.zeros(V)
+    cnt = Counter(toks)
+    for tok, c in cnt.items():
+        if tok in vocab:
+            vec[vocab[tok]] = c * idf.get(tok, 0)
+    norm = np.linalg.norm(vec)
+    if norm > 0: vec = vec / norm
+    sims = chunk_vectors @ vec if V>0 else np.array([0])
+    max_sim = float(np.max(sims)) if len(sims) else 0
+    answer = get_answer(q.question, max_sim)
+    return {"answer": answer}
 
 @app.get("/")
 def home():
@@ -167,4 +125,4 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "chunks": len(chunks)}
+    return {"status": "ok"}
