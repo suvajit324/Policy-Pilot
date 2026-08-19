@@ -1,36 +1,40 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import pickle, faiss, numpy as np, os, hashlib
+import pickle, os, numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = FastAPI()
 BASE = os.path.dirname(os.path.abspath(__file__))
 
 chunks = pickle.load(open(os.path.join(BASE, "chunks.pkl"), "rb"))
-index = faiss.read_index(os.path.join(BASE, "policy.index"))
 
-def get_embedding(text: str):
-    # Lightweight deterministic embedding - no torch/model needed
-    h = hashlib.md5(text.encode()).digest()
-    vec = np.array([b for b in h * 24], dtype="float32")[:384]
-    vec = vec / (np.linalg.norm(vec) + 1e-9)
-    # add simple word overlap boost
-    return vec
+# Build TF-IDF index - smart keyword search
+vectorizer = TfidfVectorizer(stop_words='english')
+chunk_vectors = vectorizer.fit_transform(chunks)
 
 class Q(BaseModel):
     question: str
 
 @app.post("/ask")
 def ask(q: Q):
-    # Simple keyword search + faiss (works without HF API)
-    q_lower = q.question.lower()
-    scores = []
-    for i, c in enumerate(chunks):
-        score = sum(1 for w in q_lower.split() if w in c.lower())
-        scores.append(score)
-    top = sorted(range(len(chunks)), key=lambda i: scores[i], reverse=True)[:3]
-    ctx = "\n\n".join([chunks[i] for i in top])
-    return {"answer": ctx[:2500], "sources": top}
+    q_vec = vectorizer.transform([q.question])
+    sims = cosine_similarity(q_vec, chunk_vectors)[0]
+    top_idx = np.argsort(sims)[::-1][:3]
+
+    # Only keep relevant chunks (similarity > 0.1)
+    relevant = [i for i in top_idx if sims[i] > 0.05]
+    if not relevant:
+        relevant = top_idx[:2]
+
+    ctx = "\n\n---\n\n".join([chunks[i] for i in relevant])
+
+    return {
+        "answer": ctx,
+        "sources": relevant.tolist() if hasattr(relevant, 'tolist') else list(relevant),
+        "scores": [float(sims[i]) for i in relevant]
+    }
 
 @app.get("/")
 def home():
