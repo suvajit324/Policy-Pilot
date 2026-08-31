@@ -1,4 +1,4 @@
 fastapi
-uvicorn[standard]
-numpy
-scikit-learn
+uvicorn
+pydantic
+openai==0.28.0
