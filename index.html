@@ -76,7 +76,7 @@ body { background:#0a0a0f; color:#e5e7eb; display:flex; height:100vh; overflow:h
 </div>
 <div class="main">
 <div class="chat" id="chat">
-<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">Hi! I'm <b>PolicyPilot Avatar</b>. First click <b>Enable Voice</b> (green button) 🔊, then ask me anything - I will speak every answer. Try the quick questions on left!</div></div>
+<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">Hi! I'm <b>PolicyPilot Avatar</b>. First click <b>Enable Voice</b> (green button) 🔊, then ask me anything - I will speak every answer without asterisks! Try quick questions on left!</div></div>
 </div>
 <div class="input-wrap">
 <div class="input-box">
@@ -92,10 +92,7 @@ let voiceEnabled = false;
 const avatarImg = document.getElementById('hrAvatar');
 const wave = document.getElementById('wave');
 const statusEl = document.getElementById('avatarStatus');
-
-// AUTO-DETECT BACKEND - works both on Render and local file
 const BACKEND_URL = window.location.hostname === 'policy-pilot-8vpo.onrender.com' ? '' : 'https://policy-pilot-8vpo.onrender.com';
-console.log("Backend URL:", BACKEND_URL || "same origin");
 
 function askQuick(t) { document.getElementById('q').value = t; send(); }
 
@@ -108,16 +105,53 @@ function enableVoice(){
   statusEl.innerText = "HR Buddy • Voice Enabled ✅";
   statusEl.style.color = "#22c55e";
   document.getElementById('enableVoiceBtn').style.display = 'none';
-  console.log("Voice enabled");
+}
+
+function cleanForSpeech(text){
+  // Remove all markdown that causes "asterisk" speech
+  let clean = text;
+  // Remove **bold** markers
+  clean = clean.replace(/\*\*/g, '');
+  // Remove single * 
+  clean = clean.replace(/\*/g, '');
+  // Remove # headers
+  clean = clean.replace(/#{1,6}\s/g, '');
+  // Remove ✅ emoji for speech
+  clean = clean.replace(/✅/g, '');
+  // Remove Details: Source:
+  clean = clean.replace(/Details:|Source:.*$/gm, '');
+  // Remove bullet •
+  clean = clean.replace(/•/g, '');
+  // Remove extra spaces and newlines
+  clean = clean.replace(/\n+/g, '. ');
+  // Trim to 600 chars
+  clean = clean.trim().substring(0, 600);
+  return clean;
+}
+
+function formatAnswerForDisplay(text){
+  let ans = text;
+  // Convert **bold** to <b>bold</b>
+  ans = ans.replace(/\*\*(.*?)\*\*/g, '<b style="color:#a78bfa">$1</b>');
+  // Remove remaining single *
+  ans = ans.replace(/\*/g, '');
+  // Details header
+  ans = ans.replace(/Details:/g, '<br><b style="color:#fff;margin-top:12px;display:block">Details:</b>');
+  // Source
+  ans = ans.replace(/Source:.*/g, '<br><br><small style="color:#666">$&</small>');
+  // Bullets
+  ans = ans.split('•').map((p,i) => i===0 ? p : `<div class="bullet">${p.trim()}</div>`).join('');
+  ans = ans.replace(/\n/g, '<br>');
+  return ans;
 }
 
 function speakAnswer(text) {
-  if(!voiceEnabled){
-    enableVoice();
-  }
+  if(!voiceEnabled){ enableVoice(); }
   window.speechSynthesis.cancel();
   lastAnswerText = text;
-  let cleanText = text.replace(/✅|Details:|Source:.*/g, '').replace(/•/g, '').trim().substring(0, 600);
+  
+  let cleanText = cleanForSpeech(text);
+  console.log("Speaking cleaned:", cleanText.substring(0,100));
   
   avatarImg.classList.add('speaking');
   wave.style.display = "block";
@@ -145,7 +179,7 @@ function speakAnswer(text) {
   utterance.onerror = (e) => {
     avatarImg.classList.remove('speaking');
     wave.style.display = "none";
-    statusEl.innerText = "Ready - Click Replay";
+    statusEl.innerText = "Speech error - try Replay";
     console.error("Speech error:", e);
   };
   
@@ -178,7 +212,7 @@ async function submitFeedback(btn) {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({rating: rating, comment: comment, question: lastQuestionText})
     });
-    row.innerHTML = `<div style="color:#22c55e;font-size:12px">✅ Thanks! Rated ${rating}⭐ - tracked in traction</div>`;
+    row.innerHTML = `<div style="color:#22c55e;font-size:12px">✅ Thanks! Rated ${rating}⭐</div>`;
   } catch(e){
     row.innerHTML = `<div style="color:#ff7b7b;font-size:12px">Error saving feedback</div>`;
   }
@@ -214,12 +248,7 @@ async function send() {
     const data = await res.json();
     document.getElementById(id).remove();
     
-    let ans = data.answer;
-    ans = ans.replace(/✅ Answer for:.*?\n\n/, '<b style="color:#a78bfa;font-size:15px">✅ Answer</b><br><br>');
-    ans = ans.replace(/Details:/g, '<br><b style="color:#fff;margin-top:12px;display:block">Details:</b>');
-    ans = ans.replace(/Source:.*/g, '<br><br><small style="color:#666">$&</small>');
-    ans = ans.split('•').map((p,i) => i===0 ? p : `<div class="bullet">${p.trim()}</div>`).join('');
-    ans = ans.replace(/\n/g, '<br>');
+    let formatted = formatAnswerForDisplay(data.answer);
 
     const feedbackHtml = `
       <div class="feedback-row" data-rating="0">
@@ -234,20 +263,18 @@ async function send() {
       </div>
     `;
 
-    chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">${ans} <br><br><button class="ctrl" style="margin-top:8px" onclick="replayLast()">🔊 Replay Voice</button>${feedbackHtml}</div></div>`;
+    chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">${formatted} <br><br><button class="ctrl" style="margin-top:8px" onclick="replayLast()">🔊 Replay Voice</button>${feedbackHtml}</div></div>`;
     
     setTimeout(()=>{ speakAnswer(data.answer); }, 200);
 
   } catch (e) {
     document.getElementById(id).remove();
-    chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot" style="color:#ff7b7b">Error: ${e.message}. <br>Backend: ${BACKEND_URL}/ask<br>Try opening live link: <a href='https://policy-pilot-8vpo.onrender.com' target='_blank' style='color:#a78bfa'>https://policy-pilot-8vpo.onrender.com</a></div></div>`;
-    console.error(e);
+    chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot" style="color:#ff7b7b">Error: ${e.message}</div></div>`;
   }
   chat.scrollTop = chat.scrollHeight;
 }
 
 window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
-console.log("PolicyPilot FIXED loaded. Backend:", BACKEND_URL);
 </script>
 </body>
 </html>
