@@ -40,13 +40,13 @@ body { background:#0a0a0f; color:#e5e7eb; display:flex; height:100vh; overflow:h
 .wave-bar { display:inline-block; width:3px; height:14px; background:#22c55e; margin:0 1.5px; border-radius:3px; animation:wave 0.8s infinite; }
 .wave-bar:nth-child(2){animation-delay:0.1s}.wave-bar:nth-child(3){animation-delay:0.2s}.wave-bar:nth-child(4){animation-delay:0.3s}
 @keyframes wave{0%,100%{height:8px}50%{height:18px}}
-.avatar-controls { display:flex; gap:6px; justify-content:center; margin-top:10px; }
+.avatar-controls { display:flex; gap:6px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
 .ctrl { font-size:10px; background:#22223a; border:1px solid #333; color:#aaa; padding:5px 8px; border-radius:6px; cursor:pointer; }
 .ctrl:hover{ color:#fff; border-color:#8b5cf6; }
-.feedback-row { display:flex; gap:6px; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid #2a2a40; }
+.feedback-row { display:flex; gap:6px; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid #2a2a40; flex-wrap:wrap; }
 .star { font-size:18px; cursor:pointer; color:#333; transition:0.2s; }
 .star.active, .star:hover { color:#fbbf24; }
-.feedback-input { background:#11111a; border:1px solid #333; border-radius:8px; padding:8px 10px; color:#fff; font-size:12px; flex:1; margin-left:8px; }
+.feedback-input { background:#11111a; border:1px solid #333; border-radius:8px; padding:8px 10px; color:#fff; font-size:12px; flex:1; min-width:120px; margin-left:8px; }
 </style>
 </head>
 <body>
@@ -54,13 +54,13 @@ body { background:#0a0a0f; color:#e5e7eb; display:flex; height:100vh; overflow:h
 <div class="logo"><div class="logo-icon">🤖</div><div><h1>PolicyPilot</h1><p>Enterprise v2.0</p></div></div>
 <div class="avatar-wrap">
   <img id="hrAvatar" src="https://api.dicebear.com/7.x/avataaars/svg?seed=Suvajit&backgroundColor=b6e3f4,c0aede,d1d4f9&clothing=blazerAndShirt" alt="HR Avatar">
-  <div id="avatarStatus">HR Buddy • Ready - Click Enable Voice</div>
+  <div id="avatarStatus">HR Buddy • Click Enable Voice</div>
   <div id="wave">
     <span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span>
     <span style="font-size:10px;color:#22c55e;margin-left:4px">Speaking</span>
   </div>
   <div class="avatar-controls">
-    <button class="ctrl" id="enableVoiceBtn" style="background:#22c55e;color:white;border:none" onclick="enableVoice()">🔊 Enable Voice</button>
+    <button class="ctrl" id="enableVoiceBtn" style="background:#22c55e;color:white;border:none;font-weight:600" onclick="enableVoice()">🔊 Enable Voice</button>
     <button class="ctrl" onclick="replayLast()">🔊 Replay</button>
     <button class="ctrl" onclick="stopVoice()">⏹ Stop</button>
   </div>
@@ -72,11 +72,11 @@ body { background:#0a0a0f; color:#e5e7eb; display:flex; height:100vh; overflow:h
 <button class="q-btn" onclick="askQuick('What are working hours?')">⏰ What are working hours?</button>
 <button class="q-btn" onclick="askQuick('How to claim reimbursement?')">💰 How to claim reimbursement?</button>
 <button class="q-btn" onclick="askQuick('Explain performance review?')">🎯 Explain performance review?</button>
-<div class="footer"><span class="dot"></span>AI Online • <a href="/traction" target="_blank" style="color:#a78bfa">Traction 📊</a> • <a href="/stats" target="_blank" style="color:#666">Stats</a><br><br>Built by Suvajit • RAG + Avatar</div>
+<div class="footer"><span class="dot"></span>AI Online • <a href="https://policy-pilot-8vpo.onrender.com/traction" target="_blank" style="color:#a78bfa">Traction 📊</a> • <a href="https://policy-pilot-8vpo.onrender.com/stats" target="_blank" style="color:#666">Stats</a><br><br>Built by Suvajit • RAG + Avatar</div>
 </div>
 <div class="main">
 <div class="chat" id="chat">
-<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">Hi! I'm <b>PolicyPilot Avatar</b>. First click <b>Enable Voice</b> button, then ask me anything - I will speak every answer. 🔊</div></div>
+<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">Hi! I'm <b>PolicyPilot Avatar</b>. First click <b>Enable Voice</b> (green button) 🔊, then ask me anything - I will speak every answer. Try the quick questions on left!</div></div>
 </div>
 <div class="input-wrap">
 <div class="input-box">
@@ -93,34 +93,31 @@ const avatarImg = document.getElementById('hrAvatar');
 const wave = document.getElementById('wave');
 const statusEl = document.getElementById('avatarStatus');
 
+// AUTO-DETECT BACKEND - works both on Render and local file
+const BACKEND_URL = window.location.hostname === 'policy-pilot-8vpo.onrender.com' ? '' : 'https://policy-pilot-8vpo.onrender.com';
+console.log("Backend URL:", BACKEND_URL || "same origin");
+
 function askQuick(t) { document.getElementById('q').value = t; send(); }
 
 function enableVoice(){
   voiceEnabled = true;
   window.speechSynthesis.getVoices();
-  // test speak
-  const test = new SpeechSynthesisUtterance("Voice enabled. I am your HR Buddy.");
-  test.volume = 1;
+  const test = new SpeechSynthesisUtterance("Voice enabled");
+  test.volume = 0;
   window.speechSynthesis.speak(test);
   statusEl.innerText = "HR Buddy • Voice Enabled ✅";
   statusEl.style.color = "#22c55e";
   document.getElementById('enableVoiceBtn').style.display = 'none';
-  console.log("Voice enabled, voices:", window.speechSynthesis.getVoices());
+  console.log("Voice enabled");
 }
 
 function speakAnswer(text) {
-  console.log("speakAnswer called with:", text.substring(0,50));
   if(!voiceEnabled){
-    console.log("Voice not enabled yet - enabling now");
-    voiceEnabled = true;
-    statusEl.innerText = "HR Buddy • Voice Enabled ✅";
-    document.getElementById('enableVoiceBtn').style.display = 'none';
+    enableVoice();
   }
   window.speechSynthesis.cancel();
   lastAnswerText = text;
-  // Clean but keep meaningful
   let cleanText = text.replace(/✅|Details:|Source:.*/g, '').replace(/•/g, '').trim().substring(0, 600);
-  console.log("Clean text:", cleanText.substring(0,100));
   
   avatarImg.classList.add('speaking');
   wave.style.display = "block";
@@ -133,42 +130,32 @@ function speakAnswer(text) {
   utterance.pitch = 1;
   utterance.lang = 'en-US';
   
-  // Try to get voice - wait if empty
   let voices = window.speechSynthesis.getVoices();
-  console.log("Voices available:", voices.length);
   if(voices.length > 0){
     let pref = voices.find(v => v.lang.includes('en-US') && v.name.includes('Google')) || voices.find(v => v.lang.includes('en')) || voices[0];
-    if(pref){
-      utterance.voice = pref;
-      console.log("Using voice:", pref.name);
-    }
+    if(pref) utterance.voice = pref;
   }
 
-  utterance.onstart = () => { console.log("Speech started"); };
   utterance.onend = () => {
-    console.log("Speech ended");
     avatarImg.classList.remove('speaking');
     wave.style.display = "none";
-    statusEl.innerText = "HR Buddy • Ready";
+    statusEl.innerText = "HR Buddy • Ready ✅";
     statusEl.style.color = "#a78bfa";
   };
   utterance.onerror = (e) => {
-    console.error("Speech error:", e);
     avatarImg.classList.remove('speaking');
     wave.style.display = "none";
-    statusEl.innerText = "Speech error - try again";
-    alert("Speech error: " + e.error + ". Check system volume & Chrome permission. Try Enable Voice again.");
+    statusEl.innerText = "Ready - Click Replay";
+    console.error("Speech error:", e);
   };
   
   window.speechSynthesis.speak(utterance);
-  // Chrome bug fix - resume if paused
   setTimeout(()=>{ window.speechSynthesis.resume(); }, 100);
 }
 
-function stopVoice(){ window.speechSynthesis.cancel(); avatarImg.classList.remove('speaking'); wave.style.display="none"; statusEl.innerText="Stopped - Voice Enabled"; }
+function stopVoice(){ window.speechSynthesis.cancel(); avatarImg.classList.remove('speaking'); wave.style.display="none"; statusEl.innerText="Stopped"; }
 function replayLast(){ 
   if(!lastAnswerText){ alert("Ask a question first!"); return; }
-  console.log("Replay last:", lastAnswerText.substring(0,50));
   speakAnswer(lastAnswerText); 
 }
 
@@ -186,12 +173,12 @@ async function submitFeedback(btn) {
   if(!rating){ alert("Please select stars ⭐"); return; }
   btn.innerText = "Thanks!"; btn.disabled = true;
   try {
-    await fetch('/feedback', {
+    await fetch(BACKEND_URL + '/feedback', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({rating: rating, comment: comment, question: lastQuestionText})
     });
-    row.innerHTML = `<div style="color:#22c55e;font-size:12px">✅ Thanks! Rated ${rating}⭐ - tracked</div>`;
+    row.innerHTML = `<div style="color:#22c55e;font-size:12px">✅ Thanks! Rated ${rating}⭐ - tracked in traction</div>`;
   } catch(e){
     row.innerHTML = `<div style="color:#ff7b7b;font-size:12px">Error saving feedback</div>`;
   }
@@ -203,7 +190,7 @@ async function send() {
   if (!question) return;
   const chat = document.getElementById('chat');
   lastQuestionText = question;
-  // Auto enable on first question
+  
   if(!voiceEnabled){
     voiceEnabled = true;
     window.speechSynthesis.getVoices();
@@ -219,7 +206,7 @@ async function send() {
   chat.scrollTop = chat.scrollHeight;
 
   try {
-    const res = await fetch('/ask', {
+    const res = await fetch(BACKEND_URL + '/ask', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({question: question})
@@ -234,9 +221,8 @@ async function send() {
     ans = ans.split('•').map((p,i) => i===0 ? p : `<div class="bullet">${p.trim()}</div>`).join('');
     ans = ans.replace(/\n/g, '<br>');
 
-    const feedbackId = 'fb-'+Date.now();
     const feedbackHtml = `
-      <div class="feedback-row" id="${feedbackId}" data-rating="0">
+      <div class="feedback-row" data-rating="0">
         <span style="font-size:11px;color:#888">Rate:</span>
         <span class="star" onclick="setRating(1,this)">★</span>
         <span class="star" onclick="setRating(2,this)">★</span>
@@ -250,22 +236,18 @@ async function send() {
 
     chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">${ans} <br><br><button class="ctrl" style="margin-top:8px" onclick="replayLast()">🔊 Replay Voice</button>${feedbackHtml}</div></div>`;
     
-    // Small delay to ensure UI updated before speaking
     setTimeout(()=>{ speakAnswer(data.answer); }, 200);
 
   } catch (e) {
     document.getElementById(id).remove();
-    chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot" style="color:#ff7b7b">Error: Backend not running. ${e}</div></div>`;
+    chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot" style="color:#ff7b7b">Error: ${e.message}. <br>Backend: ${BACKEND_URL}/ask<br>Try opening live link: <a href='https://policy-pilot-8vpo.onrender.com' target='_blank' style='color:#a78bfa'>https://policy-pilot-8vpo.onrender.com</a></div></div>`;
+    console.error(e);
   }
   chat.scrollTop = chat.scrollHeight;
 }
 
-window.speechSynthesis.onvoiceschanged = () => { 
-  console.log("Voices changed:", window.speechSynthesis.getVoices().length);
-  window.speechSynthesis.getVoices(); 
-};
-
-console.log("PolicyPilot loaded. Click Enable Voice first.");
+window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+console.log("PolicyPilot FIXED loaded. Backend:", BACKEND_URL);
 </script>
 </body>
 </html>
