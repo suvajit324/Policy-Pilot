@@ -60,14 +60,14 @@ body { background:#0a0a0f; color:#e5e7eb; display:flex; height:100vh; overflow:h
     <span style="font-size:10px;color:#22c55e;margin-left:4px">Speaking</span>
   </div>
   <div class="avatar-controls">
-    <button class="ctrl" id="enableVoiceBtn" style="background:#22c55e;color:white;border:none;font-weight:600" onclick="enableVoice()">🔊 Enable Voice</button>
+    <button class="ctrl" id="enableVoiceBtn" style="background:#22c55e;color:white;border:none;font-weight:600;padding:8px 14px;font-size:12px" onclick="enableVoice()">🔊 Enable Voice - Click First!</button>
     <button class="ctrl" onclick="replayLast()">🔊 Replay</button>
     <button class="ctrl" onclick="stopVoice()">⏹ Stop</button>
   </div>
 </div>
 <button class="new-chat" onclick="location.reload()">+ New Chat</button>
 <div class="try">TRY ASKING</div>
-<button class="q-btn" onclick="askQuick('What is the leave policy?')">🏖️ What is the leave policy?</button>
+<button class="q-btn" onclick="askQuick('What is the leave policy?')">🏖 What is the leave policy?</button>
 <button class="q-btn" onclick="askQuick('What is WFH policy?')">🏠 What is WFH policy?</button>
 <button class="q-btn" onclick="askQuick('What are working hours?')">⏰ What are working hours?</button>
 <button class="q-btn" onclick="askQuick('How to claim reimbursement?')">💰 How to claim reimbursement?</button>
@@ -76,7 +76,7 @@ body { background:#0a0a0f; color:#e5e7eb; display:flex; height:100vh; overflow:h
 </div>
 <div class="main">
 <div class="chat" id="chat">
-<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">Hi! I'm <b>PolicyPilot Avatar</b>. First click <b>Enable Voice</b> (green button) 🔊, then ask me anything - I will speak every answer without asterisks! Try quick questions on left!</div></div>
+<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">Hi! I'm <b>PolicyPilot Avatar</b>. <b style="color:#22c55e">Step 1: Click green Enable Voice button first!</b> Then ask anything - I will auto-speak every answer without asterisks! 🔊</div></div>
 </div>
 <div class="input-wrap">
 <div class="input-box">
@@ -89,6 +89,7 @@ body { background:#0a0a0f; color:#e5e7eb; display:flex; height:100vh; overflow:h
 let lastAnswerText = "";
 let lastQuestionText = "";
 let voiceEnabled = false;
+let voicesLoaded = false;
 const avatarImg = document.getElementById('hrAvatar');
 const wave = document.getElementById('wave');
 const statusEl = document.getElementById('avatarStatus');
@@ -96,66 +97,100 @@ const BACKEND_URL = window.location.hostname === 'policy-pilot-8vpo.onrender.com
 
 function askQuick(t) { document.getElementById('q').value = t; send(); }
 
+function loadVoices(){
+  const voices = window.speechSynthesis.getVoices();
+  if(voices.length > 0){
+    voicesLoaded = true;
+    console.log("Voices loaded:", voices.length);
+  }
+  return voices;
+}
+
 function enableVoice(){
+  console.log("Enable voice clicked");
   voiceEnabled = true;
-  window.speechSynthesis.getVoices();
-  const test = new SpeechSynthesisUtterance("Voice enabled");
-  test.volume = 0;
-  window.speechSynthesis.speak(test);
-  statusEl.innerText = "HR Buddy • Voice Enabled ✅";
-  statusEl.style.color = "#22c55e";
-  document.getElementById('enableVoiceBtn').style.display = 'none';
+  window.speechSynthesis.cancel();
+  
+  // Load voices
+  loadVoices();
+  
+  // Chrome requires user gesture - speak silent to unlock
+  const unlock = new SpeechSynthesisUtterance("Voice enabled for HR Buddy");
+  unlock.volume = 1;
+  unlock.rate = 1;
+  unlock.onend = () => {
+    console.log("Voice unlocked");
+    statusEl.innerText = "HR Buddy • Voice Enabled ✅ - Will auto-speak!";
+    statusEl.style.color = "#22c55e";
+    document.getElementById('enableVoiceBtn').innerText = "✅ Voice Enabled";
+    document.getElementById('enableVoiceBtn').style.background = "#1a1a27";
+    document.getElementById('enableVoiceBtn').style.color = "#22c55e";
+  };
+  
+  const voices = loadVoices();
+  if(voices.length > 0){
+    const pref = voices.find(v => v.lang.includes('en-US')) || voices[0];
+    if(pref) unlock.voice = pref;
+  }
+  
+  window.speechSynthesis.speak(unlock);
 }
 
 function cleanForSpeech(text){
-  // Remove all markdown that causes "asterisk" speech
   let clean = text;
-  // Remove **bold** markers
-  clean = clean.replace(/\*\*/g, '');
-  // Remove single * 
-  clean = clean.replace(/\*/g, '');
-  // Remove # headers
-  clean = clean.replace(/#{1,6}\s/g, '');
-  // Remove ✅ emoji for speech
-  clean = clean.replace(/✅/g, '');
-  // Remove Details: Source:
-  clean = clean.replace(/Details:|Source:.*$/gm, '');
-  // Remove bullet •
-  clean = clean.replace(/•/g, '');
-  // Remove extra spaces and newlines
+  // CRITICAL: Remove markdown that causes asterisk speech
+  clean = clean.replace(/\*\*(.*?)\*\*/g, '$1'); // **bold** -> bold
+  clean = clean.replace(/\*(.*?)\*/g, '$1'); // *italic* -> italic
+  clean = clean.replace(/#/g, ''); // # headers
+  clean = clean.replace(/✅/g, ''); // emoji
+  clean = clean.replace(/•/g, ''); // bullets
+  clean = clean.replace(/Details:/gi, '');
+  clean = clean.replace(/Source:.*$/gim, '');
+  clean = clean.replace(/\(.*?\)/g, ''); // remove (pro-rata if you joined...)
   clean = clean.replace(/\n+/g, '. ');
-  // Trim to 600 chars
-  clean = clean.trim().substring(0, 600);
+  clean = clean.replace(/\s+/g, ' ');
+  clean = clean.trim().substring(0, 500);
+  // Final safety: remove any remaining * 
+  clean = clean.replace(/\*/g, '');
   return clean;
 }
 
 function formatAnswerForDisplay(text){
   let ans = text;
-  // Convert **bold** to <b>bold</b>
+  // Convert **bold** to purple bold
   ans = ans.replace(/\*\*(.*?)\*\*/g, '<b style="color:#a78bfa">$1</b>');
-  // Remove remaining single *
+  // Remove leftover *
   ans = ans.replace(/\*/g, '');
-  // Details header
   ans = ans.replace(/Details:/g, '<br><b style="color:#fff;margin-top:12px;display:block">Details:</b>');
-  // Source
   ans = ans.replace(/Source:.*/g, '<br><br><small style="color:#666">$&</small>');
-  // Bullets
   ans = ans.split('•').map((p,i) => i===0 ? p : `<div class="bullet">${p.trim()}</div>`).join('');
   ans = ans.replace(/\n/g, '<br>');
   return ans;
 }
 
 function speakAnswer(text) {
-  if(!voiceEnabled){ enableVoice(); }
+  if(!voiceEnabled){
+    console.log("Voice not enabled, enabling now");
+    enableVoice();
+    // Wait 500ms for unlock then speak
+    setTimeout(() => speakAnswer(text), 600);
+    return;
+  }
+  
   window.speechSynthesis.cancel();
   lastAnswerText = text;
   
   let cleanText = cleanForSpeech(text);
-  console.log("Speaking cleaned:", cleanText.substring(0,100));
+  console.log("Speaking:", cleanText.substring(0,80));
+  
+  if(!cleanText || cleanText.length < 5){
+    console.log("Clean text too short, not speaking");
+    return;
+  }
   
   avatarImg.classList.add('speaking');
   wave.style.display = "block";
-  statusEl.innerText = "Speaking...";
+  statusEl.innerText = "Speaking... 🔊";
   statusEl.style.color = "#22c55e";
 
   const utterance = new SpeechSynthesisUtterance(cleanText);
@@ -164,32 +199,40 @@ function speakAnswer(text) {
   utterance.pitch = 1;
   utterance.lang = 'en-US';
   
-  let voices = window.speechSynthesis.getVoices();
+  let voices = loadVoices();
   if(voices.length > 0){
-    let pref = voices.find(v => v.lang.includes('en-US') && v.name.includes('Google')) || voices.find(v => v.lang.includes('en')) || voices[0];
-    if(pref) utterance.voice = pref;
+    let pref = voices.find(v => v.name.includes('Google') && v.lang.includes('en-US')) || voices.find(v => v.lang.includes('en-US')) || voices.find(v => v.lang.includes('en')) || voices[0];
+    if(pref){
+      utterance.voice = pref;
+      console.log("Using voice:", pref.name);
+    }
   }
 
+  utterance.onstart = () => console.log("Speech started");
   utterance.onend = () => {
+    console.log("Speech ended");
     avatarImg.classList.remove('speaking');
     wave.style.display = "none";
-    statusEl.innerText = "HR Buddy • Ready ✅";
+    statusEl.innerText = "HR Buddy • Ready ✅ - Auto-speaks";
     statusEl.style.color = "#a78bfa";
   };
   utterance.onerror = (e) => {
+    console.error("Speech error:", e.error);
     avatarImg.classList.remove('speaking');
     wave.style.display = "none";
-    statusEl.innerText = "Speech error - try Replay";
-    console.error("Speech error:", e);
+    statusEl.innerText = "Click Replay to speak";
+    // Don't show error alert, just log
   };
   
   window.speechSynthesis.speak(utterance);
-  setTimeout(()=>{ window.speechSynthesis.resume(); }, 100);
+  // Chrome bug fix
+  setTimeout(()=>{ window.speechSynthesis.resume(); }, 150);
 }
 
-function stopVoice(){ window.speechSynthesis.cancel(); avatarImg.classList.remove('speaking'); wave.style.display="none"; statusEl.innerText="Stopped"; }
+function stopVoice(){ window.speechSynthesis.cancel(); avatarImg.classList.remove('speaking'); wave.style.display="none"; statusEl.innerText="Stopped - Click Replay"; }
 function replayLast(){ 
   if(!lastAnswerText){ alert("Ask a question first!"); return; }
+  console.log("Replay:", lastAnswerText.substring(0,30));
   speakAnswer(lastAnswerText); 
 }
 
@@ -214,7 +257,7 @@ async function submitFeedback(btn) {
     });
     row.innerHTML = `<div style="color:#22c55e;font-size:12px">✅ Thanks! Rated ${rating}⭐</div>`;
   } catch(e){
-    row.innerHTML = `<div style="color:#ff7b7b;font-size:12px">Error saving feedback</div>`;
+    row.innerHTML = `<div style="color:#ff7b7b;font-size:12px">Error</div>`;
   }
 }
 
@@ -225,12 +268,9 @@ async function send() {
   const chat = document.getElementById('chat');
   lastQuestionText = question;
   
+  // Auto-enable voice on first question if not enabled
   if(!voiceEnabled){
-    voiceEnabled = true;
-    window.speechSynthesis.getVoices();
-    statusEl.innerText = "HR Buddy • Voice Enabled ✅";
-    const btn = document.getElementById('enableVoiceBtn');
-    if(btn) btn.style.display = 'none';
+    enableVoice();
   }
   
   chat.innerHTML += `<div class="msg-row user"><div class="bubble-user">${question}</div><div class="bot-icon" style="background:#8b5cf6">👤</div></div>`;
@@ -265,7 +305,10 @@ async function send() {
 
     chat.innerHTML += `<div class="msg-row"><div class="bot-icon">🤖</div><div class="bubble-bot">${formatted} <br><br><button class="ctrl" style="margin-top:8px" onclick="replayLast()">🔊 Replay Voice</button>${feedbackHtml}</div></div>`;
     
-    setTimeout(()=>{ speakAnswer(data.answer); }, 200);
+    // Auto-speak after 400ms
+    setTimeout(()=>{ 
+      speakAnswer(data.answer); 
+    }, 400);
 
   } catch (e) {
     document.getElementById(id).remove();
@@ -274,7 +317,15 @@ async function send() {
   chat.scrollTop = chat.scrollHeight;
 }
 
-window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
+// Preload voices
+window.speechSynthesis.onvoiceschanged = () => { 
+  loadVoices();
+  console.log("Voices changed, loaded:", voicesLoaded);
+};
+window.addEventListener('load', () => {
+  loadVoices();
+  setTimeout(loadVoices, 500);
+});
 </script>
 </body>
 </html>
