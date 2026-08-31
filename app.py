@@ -1,44 +1,26 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os, time, json, datetime
-from collections import Counter, defaultdict
+import os, time, datetime
+from collections import defaultdict
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-# --- ANALYTICS STORAGE ---
-STATS_FILE = os.path.join(BASE, "traction_stats.json")
-def load_stats():
-    if os.path.exists(STATS_FILE):
-        try:
-            return json.load(open(STATS_FILE))
-        except:
-            pass
-    return {
-        "total_questions": 0,
-        "unique_users": [],
-        "questions_log": [],
-        "topic_counts": {"leave":0, "wfh":0, "working hours":0, "reimbursement":0, "performance":0, "other":0},
-        "feedback": [],
-        "daily_active": defaultdict(int),
-        "start_time": datetime.datetime.now().isoformat()
-    }
+# --- PERSISTENT IN-MEMORY STORAGE (Render free loses file, so memory is more reliable) ---
+# Global dict that lives as long as Render instance is awake
+stats_memory = {
+    "total_questions": 0,
+    "unique_users": set(),
+    "questions_log": [],
+    "topic_counts": {"leave":0, "wfh":0, "working hours":0, "reimbursement":0, "performance":0, "other":0},
+    "feedback": [],
+    "daily_active": defaultdict(int),
+    "start_time": datetime.datetime.now().isoformat()
+}
 
-def save_stats(s):
-    # convert defaultdict
-    s_copy = dict(s)
-    s_copy["daily_active"] = dict(s["daily_active"])
-    with open(STATS_FILE, "w") as f:
-        json.dump(s_copy, f, indent=2)
-
-stats = load_stats()
-if isinstance(stats["daily_active"], dict):
-    stats["daily_active"] = defaultdict(int, stats["daily_active"])
-
-# --- CURATED PRECISE ANSWERS ---
 CURATED = {
  "reimbursement": "✅ Answer for: How to claim reimbursement?\n\nTo claim reimbursement, submit original bills in HR/ESS portal -> Finance -> Reimbursements. Add expense type, date, amount and upload bills. Manager approves, Finance processes in 7-10 days.\n\nDetails:\n• Submit within 30 days\n• Flow: Employee → Manager → Finance\n• Paid to salary account\n\nSource: HR Policy Handbook",
  "leave": "✅ Answer for: leave policy\n\n12 Casual Leaves, 12 Sick Leaves, 15 Earned Leaves per year (pro-rata). Apply via HR/ESS -> Leave -> Apply.\n\nDetails:\n• CL: 12/year, 1 day notice\n• SL: 12/year, medical if >2 days\n• EL: 15/year, 1 week notice\n\nSource: HR Policy Handbook",
@@ -54,7 +36,6 @@ def detect_topic(q_lower):
     if "wfh" in q_lower or "work from home" in q_lower or "remote" in q_lower: return "wfh"
     if "working hour" in q_lower or "office hour" in q_lower or "timing" in q_lower or "work hour" in q_lower: return "working hours"
     if "performance" in q_lower or "review" in q_lower or "appraisal" in q_lower: return "performance"
-    if "onboard" in q_lower or "joining" in q_lower: return "other"
     return "other"
 
 class Q(BaseModel):
@@ -66,35 +47,26 @@ class Feedback(BaseModel):
 
 @app.post("/ask")
 def ask(q: Q, request: Request):
-    global stats
+    global stats_memory
     start = time.time()
     ql = q.question.lower()
     
-    # --- TRACTION TRACKING ---
     client_ip = request.client.host if request.client else "unknown"
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     
-    stats["total_questions"] += 1
-    if client_ip not in stats["unique_users"]:
-        stats["unique_users"].append(client_ip)
+    stats_memory["total_questions"] += 1
+    stats_memory["unique_users"].add(client_ip)
     topic = detect_topic(ql)
-    if topic in stats["topic_counts"]:
-        stats["topic_counts"][topic] += 1
-    else:
-        stats["topic_counts"]["other"] += 1
-    
-    stats["daily_active"][today] += 1
-    stats["questions_log"].append({
+    stats_memory["topic_counts"][topic] = stats_memory["topic_counts"].get(topic,0) + 1
+    stats_memory["daily_active"][today] += 1
+    stats_memory["questions_log"].append({
         "time": datetime.datetime.now().isoformat(),
         "question": q.question[:100],
         "topic": topic,
         "ip": client_ip
     })
-    # keep last 100
-    stats["questions_log"] = stats["questions_log"][-100:]
-    save_stats(stats)
+    stats_memory["questions_log"] = stats_memory["questions_log"][-100:]
     
-    # --- ANSWER LOGIC ---
     if "reimb" in ql or "claim" in ql: ans = CURATED["reimbursement"]
     elif "leave" in ql: ans = CURATED["leave"]
     elif "wfh" in ql or "work from home" in ql: ans = CURATED["wfh"]
@@ -102,7 +74,6 @@ def ask(q: Q, request: Request):
     elif "performance" in ql: ans = CURATED["performance"]
     elif "onboard" in ql: ans = CURATED["onboarding"]
     else:
-        # guardrail but still count
         ans = "🛡️ I can only answer Company Policy questions.\n\nTry:\n• What is leave policy?\n• What is WFH policy?\n• How to claim reimbursement?"
     
     elapsed = time.time() - start
@@ -110,46 +81,37 @@ def ask(q: Q, request: Request):
         "answer": ans,
         "source": "HR Policy Handbook",
         "time_taken": f"{elapsed*1000:.0f}ms",
-        "stats": {
-            "total_questions": stats["total_questions"],
-            "unique_users": len(stats["unique_users"])
-        }
+        "stats": {"total_questions": stats_memory["total_questions"], "unique_users": len(stats_memory["unique_users"])}
     }
 
 @app.post("/feedback")
 def submit_feedback(f: Feedback, request: Request):
-    global stats
-    stats["feedback"].append({
+    global stats_memory
+    stats_memory["feedback"].append({
         "time": datetime.datetime.now().isoformat(),
         "rating": f.rating,
         "comment": f.comment,
         "question": f.question,
         "ip": request.client.host if request.client else "unknown"
     })
-    save_stats(stats)
-    return {"status": "thanks", "total_feedback": len(stats["feedback"])}
+    return {"status": "thanks", "total_feedback": len(stats_memory["feedback"])}
 
 @app.get("/stats")
 def get_stats():
-    """Traction dashboard for deck screenshots"""
-    total = stats["total_questions"]
-    unique = len(stats["unique_users"])
-    feedback_count = len(stats["feedback"])
-    avg_rating = sum([f["rating"] for f in stats["feedback"]]) / feedback_count if feedback_count else 0
-    
-    # daily active list
-    daily = dict(stats["daily_active"])
-    
+    total = stats_memory["total_questions"]
+    unique = len(stats_memory["unique_users"])
+    feedback_count = len(stats_memory["feedback"])
+    avg_rating = sum([f["rating"] for f in stats_memory["feedback"]]) / feedback_count if feedback_count else 0
     return {
         "total_questions_asked": total,
         "unique_users": unique,
-        "topics": stats["topic_counts"],
+        "topics": stats_memory["topic_counts"],
         "feedback_count": feedback_count,
         "avg_rating": round(avg_rating, 2),
-        "daily_active_users": daily,
-        "questions_log": stats["questions_log"][-20:],
-        "feedback": stats["feedback"][-10:],
-        "uptime_since": stats.get("start_time"),
+        "daily_active_users": dict(stats_memory["daily_active"]),
+        "questions_log": stats_memory["questions_log"][-20:],
+        "feedback": stats_memory["feedback"][-10:],
+        "uptime_since": stats_memory.get("start_time"),
         "traction_goal_progress": {
             "goal": "20 users, 50 questions",
             "current_users": unique,
@@ -161,7 +123,10 @@ def get_stats():
 
 @app.get("/traction")
 def traction_page():
-    """Simple HTML dashboard to screenshot for assignment"""
+    total = stats_memory["total_questions"]
+    unique = len(stats_memory["unique_users"])
+    fb = stats_memory["feedback"]
+    avg = sum([f["rating"] for f in fb])/len(fb) if fb else 0
     html = f"""
     <html><head><title>Traction Dashboard</title>
     <style>
@@ -172,25 +137,24 @@ def traction_page():
     .topic{{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #222}}
     </style></head><body>
     <h1>📊 PolicyPilot Avatar - Traction Dashboard</h1>
-    <p>Live metrics for assignment - Take screenshot for deck</p>
+    <p>Live metrics - Render free resets when sleeps, keep tab open!</p>
     <div class="grid">
-      <div class="card"><div>Total Questions</div><div class="big">{stats['total_questions']}</div><div>Goal: 50</div></div>
-      <div class="card"><div>Unique Users</div><div class="big">{len(stats['unique_users'])}</div><div>Goal: 20</div></div>
-      <div class="card"><div>Feedback</div><div class="big">{len(stats['feedback'])} | {sum([f['rating'] for f in stats['feedback']])/len(stats['feedback']) if stats['feedback'] else 0:.1f}⭐</div><div>Avg rating</div></div>
+      <div class="card"><div>Total Questions</div><div class="big">{total}</div><div>Goal: 50</div></div>
+      <div class="card"><div>Unique Users</div><div class="big">{unique}</div><div>Goal: 20</div></div>
+      <div class="card"><div>Feedback</div><div class="big">{len(fb)} | {avg:.1f}⭐</div><div>Avg rating</div></div>
     </div>
     <div class="card"><h3>Topics Asked</h3>
-    {''.join([f'<div class="topic"><span>{k}</span><span>{v}</span></div>' for k,v in stats['topic_counts'].items()])}
+    {''.join([f'<div class="topic"><span>{k}</span><span>{v}</span></div>' for k,v in stats_memory["topic_counts"].items()])}
     </div>
     <div class="card"><h3>Recent Questions (Last 10)</h3>
-    {''.join([f"<div style='padding:6px 0;border-bottom:1px solid #222'>{l['time'][11:16]} - {l['question']} <small style='color:#888'>({l['topic']})</small></div>" for l in stats['questions_log'][-10:]])}
+    {''.join([f"<div style='padding:6px 0;border-bottom:1px solid #222'>{l['time'][11:16]} - {l['question']} <small style='color:#888'>({l['topic']})</small></div>" for l in stats_memory["questions_log"][-10:]])}
     </div>
     <div class="card"><h3>User Feedback</h3>
-    {''.join([f"<div style='padding:8px 0'>⭐{f['rating']} - {f['comment']}</div>" for f in stats['feedback'][-10:]]) if stats['feedback'] else '<div>No feedback yet</div>'}
+    {''.join([f"<div style='padding:8px 0'>⭐{f['rating']} - {f['comment']}</div>" for f in fb[-10:]]) if fb else '<div>No feedback yet</div>'}
     </div>
-    <div class="card"><small>Uptime since: {stats.get('start_time')} | Daily: {dict(stats['daily_active'])}</small></div>
+    <div class="card"><small>Uptime since: {stats_memory.get('start_time')} | Note: Render free tier resets on sleep - screenshot before deadline!</small></div>
     </body></html>
     """
-    from fastapi.responses import HTMLResponse
     return HTMLResponse(html)
 
 @app.get("/")
